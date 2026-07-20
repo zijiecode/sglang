@@ -25,19 +25,22 @@ def maybe_disable_chunked_prefix_cache(
     if is_draft_worker:
         return
 
-    from sglang.srt.runtime_context import get_context, get_schedule
-
+    # This is a load-time gate that runs in ModelRunner.__init__ BEFORE the
+    # runner publishes its config (and direct/benchmark construction never
+    # publishes earlier), so read/write the supplied server_args. The runner's
+    # subsequent publish snapshots this into the schedule bag for get_schedule()
+    # readers.
     if (
         not use_mla_backend
         or server_args.attention_backend
         not in CHUNKED_PREFIX_CACHE_SUPPORTED_ATTENTION_BACKENDS
     ):
-        if not get_schedule().disable_chunked_prefix_cache:
-            get_context().override(
+        if not server_args.disable_chunked_prefix_cache:
+            server_args.override(
                 "model_runner.chunked_prefix_cache_gate",
                 disable_chunked_prefix_cache=True,
             )
-    if not get_schedule().disable_chunked_prefix_cache:
+    if not server_args.disable_chunked_prefix_cache:
         logger.info("Chunked prefix cache is turned on.")
 
 

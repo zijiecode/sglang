@@ -41,7 +41,13 @@ from sglang.srt.model_executor.runner import (
     DecodeCudaGraphRunner,
     get_batch_sizes_to_capture,
 )
-from sglang.srt.runtime_context import get_exec, get_model, get_parallel, get_spec
+from sglang.srt.runtime_context import (
+    get_context,
+    get_exec,
+    get_model,
+    get_parallel,
+    get_spec,
+)
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.adaptive_runtime_state import (
     AdaptiveController,
@@ -1414,14 +1420,29 @@ class EAGLEWorkerV2(BaseSpecWorker):
             state.target_graph_runner
         )
 
-        # Sync server_args
-        from sglang.srt.runtime_context import get_context
-
-        get_context().override(
+        # Sync the step/draft-token counts on both config stores.
+        self._apply_adaptive_config(
             "adaptive_spec.restore",
             speculative_num_steps=state.speculative_num_steps,
             speculative_num_draft_tokens=state.speculative_num_draft_tokens,
         )
+
+    def _apply_adaptive_config(self, source: str, **fields) -> None:
+        """Rebind adaptive-spec config on both stores that back these fields.
+
+        Adaptive speculative decoding temporarily changes the step / draft-token
+        counts (and the decode graph-capture knobs) while it prebuilds per-step
+        runtime states. Those fields are read from two places: the resolved
+        config bag (runtime readers such as ``tp_worker`` / ``tokenizer_manager``
+        via ``get_spec()``) *and* ``server_args`` — attention backends and graph
+        runners read the count as ``model_runner.server_args.<field>`` and are
+        not migrated to the bag. Write both so an in-flight CUDA-graph capture
+        and later reads agree; updating only the bag leaves a rebuilt attention
+        backend sizing its metadata from the stale ``server_args`` count while
+        the graph is captured for the overridden count, which corrupts the
+        capture (illegal memory access)."""
+        get_context().override(source, **fields)
+        self.server_args.override(source, **fields)
 
     @contextlib.contextmanager
     def _override_worker_state(
@@ -1454,7 +1475,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
         self.speculative_num_draft_tokens = speculative_num_draft_tokens
         dw.speculative_num_steps = speculative_num_steps
         dw.speculative_num_draft_tokens = speculative_num_draft_tokens
-        sa.override(
+        self._apply_adaptive_config(
             "adaptive_spec.capture_override",
             speculative_num_steps=speculative_num_steps,
             speculative_num_draft_tokens=speculative_num_draft_tokens,
@@ -1464,7 +1485,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
             # for steps that no BS range uses (e.g. step=1). Disable graph
             # capture for those steps; restore in finally so subsequent steps
             # are not affected.
-            sa.override(
+            self._apply_adaptive_config(
                 "adaptive_spec.capture_override",
                 cuda_graph_bs_decode=cuda_graph_bs,
                 **({"disable_cuda_graph": True} if not cuda_graph_bs else {}),
@@ -1486,7 +1507,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
                 dw.cuda_graph_runner,
                 dw.cuda_graph_runner_for_draft_extend,
             ) = backup[:10]
-            sa.override(
+            self._apply_adaptive_config(
                 "adaptive_spec.capture_restore",
                 speculative_num_steps=backup[10],
                 speculative_num_draft_tokens=backup[11],

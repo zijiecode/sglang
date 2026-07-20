@@ -250,7 +250,6 @@ from sglang.srt.runtime_context import (
     get_observability,
     get_parallel,
     get_schedule,
-    get_server_args,
     get_serving,
     get_spec,
 )
@@ -798,7 +797,12 @@ class Scheduler(
         )
 
         if get_spec().speculative_draft_load_format is not None:
-            get_context().override(
+            # Write the draft load_format onto server_args (not just the bag):
+            # the draft worker is built from a copy of self.server_args and
+            # build_load_config reads server_args.load_format, so a bag-only
+            # override would be ignored and the draft would load in the target's
+            # format.
+            self.server_args.override(
                 "scheduler.draft_load_format",
                 load_format=get_spec().speculative_draft_load_format,
             )
@@ -3881,7 +3885,9 @@ class Scheduler(
         return success
 
     def get_internal_state(self, recv_req: GetInternalStateReq):
-        ret = dict(vars(get_server_args()))  # vars returns a ref to obj.__dict__
+        # Resolved config (pristine server_args + post-publish overrides) so a
+        # readback reflects values changed via /set_internal_state, not startup.
+        ret = get_context().resolved_server_args_dict()
         ret["last_gen_throughput"] = self.metrics_reporter.last_gen_throughput
         ret["memory_usage"] = {
             "weight": round(self.tp_worker.model_runner.weight_load_mem_usage, 2),
