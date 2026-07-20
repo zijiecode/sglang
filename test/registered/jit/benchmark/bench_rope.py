@@ -10,11 +10,16 @@ from sglang.jit_kernel.benchmark.utils import (
     get_benchmark_range,
     run_benchmark,
 )
-from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.srt.utils import is_hip
+from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
 
 register_cuda_ci(
     est_time=6, stage="base-b-kernel-benchmark", runner_config="1-gpu-large"
 )
+register_amd_ci(est_time=6, stage="jit-kernel-benchmark", runner_config="amd")
+
+# FlashInfer is CUDA-only; on ROCm we benchmark the SGL JIT providers alone.
+_IS_HIP = is_hip()
 
 MAX_SEQ_LEN = 131072
 ROPE_BASE = 10000.0
@@ -176,13 +181,18 @@ IS_NEOX_RANGE = get_benchmark_range(
 # Benchmark 1: RoPE only
 # ---------------------------------------------------------------------------
 
-ROPE_LINE_VALS = ["flashinfer", "jit_pos_enc", "jit_fused_rope"]
-ROPE_LINE_NAMES = [
-    "FlashInfer",
-    "SGL JIT PosEnc",
-    "SGL JIT Fused RoPE",
-]
-ROPE_STYLES = [("green", "-."), ("red", "-"), ("blue", "--")]
+if _IS_HIP:
+    ROPE_LINE_VALS = ["jit_pos_enc", "jit_fused_rope"]
+    ROPE_LINE_NAMES = ["SGL JIT PosEnc", "SGL JIT Fused RoPE"]
+    ROPE_STYLES = [("red", "-"), ("blue", "--")]
+else:
+    ROPE_LINE_VALS = ["flashinfer", "jit_pos_enc", "jit_fused_rope"]
+    ROPE_LINE_NAMES = [
+        "FlashInfer",
+        "SGL JIT PosEnc",
+        "SGL JIT Fused RoPE",
+    ]
+    ROPE_STYLES = [("green", "-."), ("red", "-"), ("blue", "--")]
 
 rope_configs = list(itertools.product(QK_HEAD_RANGE, IS_NEOX_RANGE, BS_RANGE))
 

@@ -3,17 +3,23 @@ import itertools
 import torch
 import triton
 import triton.testing
-from flashinfer.norm import fused_add_rmsnorm as fi_fused_add_rmsnorm
-from flashinfer.norm import rmsnorm as fi_rmsnorm
 
 from sglang.jit_kernel.benchmark.utils import get_benchmark_range, run_benchmark
 from sglang.jit_kernel.norm import fused_add_rmsnorm as jit_fused_add_rmsnorm
 from sglang.jit_kernel.norm import rmsnorm as jit_rmsnorm
-from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.srt.utils import is_hip
+from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
 
 register_cuda_ci(
     est_time=30, stage="base-b-kernel-benchmark", runner_config="1-gpu-large"
 )
+register_amd_ci(est_time=30, stage="jit-kernel-benchmark", runner_config="amd")
+
+# FlashInfer is CUDA-only; on ROCm we benchmark the SGL JIT kernel alone.
+_IS_HIP = is_hip()
+if not _IS_HIP:
+    from flashinfer.norm import fused_add_rmsnorm as fi_fused_add_rmsnorm
+    from flashinfer.norm import rmsnorm as fi_rmsnorm
 
 
 DTYPE = torch.bfloat16
@@ -28,9 +34,14 @@ HIDDEN_SIZE_LIST = get_benchmark_range(
     ci_range=[512, 2048],
 )
 
-LINE_VALS = ["flashinfer", "jit"]
-LINE_NAMES = ["FlashInfer", "SGL JIT Kernel"]
-STYLES = [("blue", "--"), ("green", "-.")]
+if _IS_HIP:
+    LINE_VALS = ["jit"]
+    LINE_NAMES = ["SGL JIT Kernel"]
+    STYLES = [("green", "-.")]
+else:
+    LINE_VALS = ["flashinfer", "jit"]
+    LINE_NAMES = ["FlashInfer", "SGL JIT Kernel"]
+    STYLES = [("blue", "--"), ("green", "-.")]
 NUM_LAYERS = 4  # avoid L2 effect
 
 configs_0 = list(itertools.product(HIDDEN_SIZE_LIST + [16384], BS_LIST))
@@ -55,7 +66,9 @@ def benchmark_rmsnorm(hidden_size: int, batch_size: int, provider: str):
         (NUM_LAYERS, batch_size, hidden_size), dtype=DTYPE, device=DEVICE
     )
     weight = torch.randn((NUM_LAYERS, hidden_size), dtype=DTYPE, device=DEVICE)
-    FN_MAP = {"jit": jit_rmsnorm, "flashinfer": fi_rmsnorm}
+    FN_MAP = {"jit": jit_rmsnorm}
+    if not _IS_HIP:
+        FN_MAP["flashinfer"] = fi_rmsnorm
 
     def f():
         fn = FN_MAP[provider]
@@ -84,7 +97,9 @@ def benchmark_fused_add_rmsnorm(hidden_size: int, batch_size: int, provider: str
     )
     residual = torch.randn_like(input)
     weight = torch.randn((NUM_LAYERS, hidden_size), dtype=DTYPE, device=DEVICE)
-    FN_MAP = {"jit": jit_fused_add_rmsnorm, "flashinfer": fi_fused_add_rmsnorm}
+    FN_MAP = {"jit": jit_fused_add_rmsnorm}
+    if not _IS_HIP:
+        FN_MAP["flashinfer"] = fi_fused_add_rmsnorm
 
     def f():
         fn = FN_MAP[provider]

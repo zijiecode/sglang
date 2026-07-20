@@ -3,12 +3,17 @@ import torch
 from sglang.jit_kernel.benchmark import marker
 from sglang.jit_kernel.benchmark.utils import create_random
 from sglang.jit_kernel.norm import fused_inplace_qknorm
-from sglang.srt.utils import get_current_device_stream_fast
-from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.srt.utils import get_current_device_stream_fast, is_hip
+from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
 
 register_cuda_ci(
     est_time=10, stage="base-b-kernel-benchmark", runner_config="1-gpu-large"
 )
+register_amd_ci(est_time=10, stage="jit-kernel-benchmark", runner_config="amd")
+
+# The "aot" impl falls back to FlashInfer (CUDA-only); skip it on ROCm.
+_IS_HIP = is_hip()
+IMPLS = ["jit", "torch"] if _IS_HIP else ["aot", "jit", "torch"]
 
 alt_stream = torch.cuda.Stream()
 
@@ -59,7 +64,7 @@ FN_MAP = {
 @marker.parametrize("GQA", [4, 8], [4])
 @marker.parametrize("num_kv_heads", [1, 2, 4, 8], [1])
 @marker.parametrize("batch_size", [2**n for n in range(0, 14)], [16])
-@marker.benchmark("impl", ["aot", "jit", "torch"])
+@marker.benchmark("impl", IMPLS)
 def benchmark(head_dim: int, GQA: int, num_kv_heads: int, batch_size: int, impl: str):
     num_qo_heads = GQA * num_kv_heads
     q = create_random(batch_size, num_qo_heads, head_dim)
