@@ -1076,16 +1076,12 @@ class ServerArgs:
     sidecar_args: A[
         Optional[List[str]],
         Arg(
-            help="JSON array of arguments passed unchanged to the selected "
-            "sidecar module's main(argv) function.",
+            help="JSON array passed to the selected sidecar module's "
+            "main(argv) function. --sidecar-shutdown-timeout SECONDS is "
+            "consumed by SGLang.",
             type_parser=json_list_type,
         ),
     ] = None
-    sidecar_shutdown_timeout: A[
-        float,
-        "Seconds to wait for a managed sidecar to shut down gracefully before "
-        "killing its process tree.",
-    ] = 45.0
     skip_server_warmup: A[bool, "If set, skip warmup."] = False
     warmups: A[
         Optional[str],
@@ -3319,8 +3315,6 @@ class ServerArgs:
         if self.sidecar is not None:
             if not self.sidecar.strip():
                 raise ValueError("--sidecar must not be empty.")
-            if self.sidecar_shutdown_timeout <= 0:
-                raise ValueError("--sidecar-shutdown-timeout must be greater than 0.")
             if legacy_grpc:
                 raise ValueError(
                     "--sidecar requires SGLang's native gRPC server; "
